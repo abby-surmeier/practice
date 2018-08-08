@@ -1,0 +1,89 @@
+---
+author: Staycee (Abby) Surmeier
+title: "practice_final"
+output: html_document
+---
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+#  Read in data
+data <- read.csv("titanic.csv", na.strings =  c('','?'))
+str(data)
+summary(data)
+head(data)
+dim(data)
+
+#de-identify data
+data <- data[,-4]
+# 891 obs. of  12 variables
+```
+General observations/questions:
+- mostly quant data --> predict which passengers died on the titanic?
+- features mostly quantitative 
+  -linear relationships?
+  -don't know much --> will need to visualize and perhaps cluster? KNN?
+- binary classification (survival) --> change to factor
+  - KNN
+  - log regression
+  - random forest
+  
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+data$Survived <- as.factor(data$Survived)
+```
+
+  
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+#Missing data
+sum(is.na(data))
+missing <- as.table(sapply(data, function(x) sum(is.na(x))))
+library(naniar)
+library(ggplot2)
+miss_plot <- gg_miss_var(data)
+miss_plot
+sum(is.na(data$Cabin))
+sum(is.na(data$Age))
+
+```
+
+There are 866 values missing, 687 (79%) in the Cabin column and 177(20%) in the age column. Will ignore these observations in further observations. 
+
+##Importance of columns with missing values
+ 
+
+library(ggplot2)
+cab_survived <- ggplot(data, aes(x = cabin))
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+data <- data[,-10]
+dim(data)
+sum(is.na(data))
+
+```
+
+Now working with 891  observations of 10 variables. 177 NA values remain in age column. Will run KNN then impute if accuracy is poor. 
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+levels <- levels(data$Cabin)
+levels[length(levels) + 1] <- "None"
+
+# refactor Cabin to include "None" as a factor level
+# and replace NA with "None"
+data$Cabin <- factor(data$Cabin, levels = levels)
+data$Cabin[is.na(data$Cabin)] <- "None"
+
+```
+
+# Get levels and add "None" for missing
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+```
+
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+```
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+```
