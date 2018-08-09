@@ -1,0 +1,455 @@
+---
+author: Staycee (Abby) Surmeier
+title: "HS614_practicefinal"
+output: html_document
+---
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+#  Read in data
+library(datasets)
+data(Glass)
+str(Glass)
+summary(Glass)
+head(Glass)
+dim(Glass)
+
+
+
+            
+```
+General observations/questions:
+-mostly quantitative
+- ranges are somewhat similar but will still standardize
+- target variable is categorical and has 6 classes
+
+###Missing data
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+sum(is.na(Glass))
+missing <- as.table(sapply(Glass, function(x) sum(is.na(x))))
+library(naniar)
+library(ggplot2)
+miss_plot <- gg_miss_var(Glass)
+miss_plot
+```
+
+No missing data
+
+## Evaluate for class imbalance
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+table(Glass$Type) 
+```
+Totally imbalanced. Will oversample in the model. 
+
+
+##Split the data into training and test set
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+library(caret)
+set.seed(123)
+intrain <- createDataPartition(y = Glass$Type, p =0.6, list = FALSE)
+training <- Glass[intrain,]
+testing <- Glass[-intrain,]
+
+#check data dimensions
+dim(training); dim(testing);
+
+#convert target variable to a factor if it isn't already
+training[["Type"]] <- factor(training[["Type"]])
+testing[["Type"]] <- factor(testing[["Type"]])
+```
+
+#try this wrapper to plot histograms of all features
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+library(reshape2)
+library(ggplot2)
+d <- melt(Glass[,-14]) #w/o target var and other categorical features
+ggplot(d, aes(x = value)) +
+	facet_wrap(~variable, scales = "free_x") +
+	geom_histogram() 
+
+```
+
+
+### Evaluate correlations to determine collinearity of quantitative features
+ As a general rules, values greater than 0.5 or less than -0.05 indicate that the correlation is strong. Values between +/- 0.30 and +/- 0.50 indicate a moderate relationship. When variables are highly correlated this can impact the accuracy of the model and inflate the standard error. Thus, it is important to consider ways to mitigate these relationships. Some common options include throwing out the explanatory variable alltogether, aggregate correlated variables into a single index or new predictor, or find a proxy variable that is similar to variables that suffer from multicollinearity but can still help with predicting the target variable. To evaluate correlations I will use the ggcorrplot package.
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE} 
+
+library(ggcorrplot)
+ggcorrplot(cor(training[,-10]), lab = TRUE, lab_size = 2)
+``` 
+
+Observations: 
+- Many significant correlations! With correlated features, strong features can end up with low scores and the method can be biased towards variables with many categories. Thus, if the model metrics are not up to par, I may want to reconsider the features being included in the model.
+
+
+### Data exploration with ggplot2
+
+### PCA
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+#make  copy of the training data specifically for PCA
+pca_data <- training 
+
+#remove the class variable
+pca_data <- pca_data[,-10]
+#check available variables
+colnames(pca_data)
+#check variable class - can only use numerics
+str(pca_data)
+#create quant data df
+quant_data <- pca_data
+
+prin_comp <- prcomp(quant_data, scale = TRUE)
+names(prin_comp)
+
+# look at first 4 principal components and first 5 rows - use this to determine which variable carries most weight in each component
+prin_comp$rotation[1:5,1:4]
+
+#principal component score vector
+dim(prin_comp$x)
+
+#plot PCs
+biplot(prin_comp, scale = 0) # scale = 0 ensures that arrows are scaled to represent the loadings
+
+#compute standard deviation of each principal component
+std_dev <- prin_comp$sdev
+
+#compute variance
+pr_var <- std_dev^2
+
+#check variance of first 10 components
+pr_var[1:10]
+
+#proportion of variance explained
+prop_varex <- pr_var/sum(pr_var)
+prop_varex[1:20]
+
+#scree plot
+plot(prop_varex, xlab = "Principal Component",
+             ylab = "Proportion of Variance Explained",
+             type = "b")
+```
+To make inference from the biplot, focused on the extreme ends (top, bottom, left, right). 
+Write some interesting findings about the scree plot -how much variance is explained by certain components (which variables are of most importance)
+- it seems that PC1 is predominantly based on RI, while PC2 is Mg
+-based on the scree plot, the first and second PC's explain most of the variance
+
+##Clustering
+
+##Kmeans
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+library(tidyverse)
+library(cluster)
+library(factoextra)
+df <- training[,-10]
+#remove missing data
+df <- na.omit(df)
+#scale data
+df <- scale(df)
+
+#compute distance matrix (using euclidean distance default)
+distance <- get_dist(df)
+#vizualize the distance matrix - can delete if not useful
+fviz_dist(distance, gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+
+
+## Kmeans - we will start with 2 and work up to 5
+#A large nstart value of 20 was utilized, as recommended by the ISLR textbook. 
+k2 <- kmeans(df, centers = 2, nstart = 20)
+k3 <- kmeans(df, centers = 3, nstart = 20)
+k4 <- kmeans(df, centers = 4, nstart = 20)
+k5 <- kmeans(df, centers = 5, nstart = 20)
+
+
+k2_plot <- fviz_cluster(k2, data = df)
+k3_plot <- fviz_cluster(k3, data = df)
+k4_plot <- fviz_cluster(k4, data = df)
+k5_plot <- fviz_cluster(k5, data = df)
+
+library(gridExtra)
+grid.arrange(k2_plot, k3_plot, k4_plot, k5_plot)
+```
+##Evaluation of clusters
+I will use 2 methods to evaluate the clusters obtained: silhouette scores and the gap statistic. I will use the factoextra package to visualize these. 
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+set.seed(123)
+fviz_nbclust(df, kmeans, method = "silhouette", diss = dist(as.matrix(df))) + labs(subtitle = "Silhouette Method")
+
+fviz_nbclust(df, kmeans, method = "gap_stat",  diss = dist(as.matrix(df))) + labs(subtitle = "Gap Statistic Method")
+```
+Based on the silhouette and gap statistic metrics, the best number of clusters is either 3 or 4.
+
+## Hierarchical Agglomerative Clustering
+
+Hierarchical clustering was performed using the quantitative features of the dataset. Given the large size of the data set and the computation time required to run a clustering algorith, I have chosen to cluster only 10% of the training data. I utilized the default euclidean distance dissimilarity measure and computed hierarchical clustering using complete, single, and average linkage and then selected the best out of the three based on the dendrograms.
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+set.seed(123)
+x <- round(0.01 *nrow(df))
+sample_agglom <- sample(1:nrow(df), x)
+df <- df[sample_agglom,]
+
+hc.average <- hclust(dist(as.matrix(df)), method = "average")
+hc.complete <- hclust(dist(as.matrix(df)), method = "complete")
+hc.single <- hclust(dist(as.matrix(df)), method = "single")
+par(mfrow = c(1,3))
+plot(hc.average, main = "Average Linkage", xlab = "", sub = "", cex = 0.9)
+plot(hc.complete, main = "Complete Linkage", xlab = "", sub = "", cex = 0.9)
+plot(hc.single, main = "Single Linkage", xlab = "", sub = "", cex = 0.9)
+
+```
+The single linkage dendrogram is not very balanced. Complete linkage seems to yield the most balanced dendrogram, with the optimal cut being at a height of 1 or 0.5. This would result in either 2 or 4 clusters (similar to the above findings from kmeans optimization). 
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+df <- training[,-10]
+library(NbClust)
+set.seed(123)
+fviz_nbclust(as.matrix(df), hcut, method = "silhouette", diss = dist(as.matrix(df))) + labs(subtitle = "Silhouette Method")
+fviz_nbclust(as.matrix(df), hcut, method = "gap_stat",  diss = dist(as.matrix(df))) + labs(subtitle = "Gap Statistic Method")
+
+```
+
+Conclusions:
+  It seems that hierarchical clustering may have more accurately clustered the data, given that the gap statistic determined the optimal number of clusters to be around 7. 
+
+####Classification
+
+### K-Nearest Neighbors Classifier
+
+I am going to start with KNN, given that it is very simple to implement, doesn't require knowledge about structure of the dataset, and executes relatively quickly for smaller datasets. Additionally, KNN classifiers are nonparametrica and very flexible. Selecting the value of k (number of neighboring observations to consider in classification) is the most difficult part of KNN. A small value means that the noise in the dataset will have a higher influence on the result; thus, the probability of overfitting is very high. A larger value makes running the algorithm computationally expensive and defeats the purpose of using this approach (points that are near might have similar classes). A common starting point is to select k as k = n^(1/2). I will stop the algorithm if it begins to take too long during the testing phase, as this is a common issue. This is due to that fact that for every test data, the distance should be computed between test data and all the training data.
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+#confirm target variable is a factor
+testing[["Type"]] <- factor(testing[["Type"]])
+
+knn.ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+knn.grid <- expand.grid(kmax = c(3,5,7,9,11), distance = c(1,2))
+set.seed(123)
+knn_fit <- train(Type ~., data = training, method = "knn",
+ trControl=knn.ctrl,
+ preProcess = c("center", "scale"),
+ tuneGrid = knn.grid,
+ tuneLength = 10)
+plot(knn_fit)
+
+##predictions
+knn_pred <- predict(knn_fit, newdata = testing)
+knn_pred
+confusionMatrix(knn_pred, testing$Type)
+
+```
+  The ROC curve can be utilized to evaluate performance of the classifier. By using the proportion of positive class data points that are correctly considered as positive (true positive) and the proportion of negative class data points that are mistakenly considered as positive (false positive), I will generate a graphic that shows the trade off between the rate at which you can correctly predict something with the rate of incorrectly predicting something.
+  The area under the ROC curve ranges from 0.50 to 1.00, and values above 0.80 indicate that the model does a great job in discriminating between the two categories which comprise our target variable. If the value of the ROC curve is between 0.50 to 0.70, I will consider revisiting the individual predictors that are in the model and consider if any other explanatory variables should be included.
+  
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+#ROC curve
+library(ROCR)
+library(pROC)
+prob_knn <- predict(knn_fit, newdata = testing, type = "prob")
+pd_knn <- prediction(prob_knn[,2], testing$class)
+roc_knn <- plot(roc(testing$class, prob_knn[,2]), print.auc = TRUE, col = "blue")
+roc_knn
+```
+
+Observations:
+
+
+## Imputate Data
+``` {r echo = TRUE, warning = FALSE, cache = TRUE}
+
+```
+
+## SVM model
+SVM was chosen to be utilized for several reasons:
+1. It is effective when the number of features is quite large 
+2. It works effectively on high dimensional data
+3. It can classify non-linear data
+4. It is robust to solve prediction problems since it maximizes margin
+
+Some limitations to consider while developing this model are:
+1. Choosing the wrong kernel can lead to increased error percentage
+2. With greater number of samples, SVMs can start giving poor performance
+3. Can be computationally expensive given that they use quadratic programming
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+#train the linear model
+svm_ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3, sampling = "up")
+set.seed(123)
+svm_linear <- train(Type ~., data = training, method = "svmLinear",
+                    trControl = svm_ctrl,
+                    preProcess = c("center", "scale"),
+                    tuneLength = 10)
+svm_linear
+
+#Test set prediction
+test_pred <- predict(svm_linear, newdata = testing)
+test_pred
+confusionMatrix(test_pred, testing$Type)
+```
+
+Observations:
+Not the best classification. Will see if using a tune grid improves this. 
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+#customizations for selecting c value in linear classifier:
+svm.grid <- expand.grid(C = c(0,0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 5))
+set.seed(123)
+svm_linear_grid <- train(Type ~., data = training, method = "svmLinear",
+                         trControl = svm_ctrl,
+                         preProcess = c("center", "scale"),
+                         tuneGrid = svm.grid,
+                         tuneLength = 10)
+svm_linear_grid
+plot(svm_linear_grid)
+# best is C = 
+
+#make predictions using this model 
+test_pred_grid <- predict(svm_linear_grid, newdata = testing)
+test_pred_grid
+confusionMatrix(test_pred_grid, testing$Type)
+test_pred_grid_roc <- predict(svm_linear_grid, newdata = testing)
+
+#ROC curve
+
+library(pROC)
+svmlin_roc<- roc(as.character(testing$Type), as.numeric(test_pred_grid))
+svmlin_auc <- auc(svmlin_roc)
+svmlin_auc
+
+```
+Tune grid actually made the results worse. Will try a different type of kernel. 
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+## SVM using nonlinear kernel
+set.seed(123)
+svm_radial <- train(Type ~., data = training, method = "svmRadial", 
+                    trControl = svm_ctrl,
+                    preProcess = c("center", "scale"),
+                    tuneLength = 10)
+svm_radial
+plot(svm_radial)
+
+#predictions
+test_pred_radial <- predict(svm_radial, newdata = testing)
+test_pred_radial
+confusionMatrix(test_pred_radial, testing$Type)
+
+#use a tuning grid and retrain model
+grid_radial <- expand.grid(sigma = c(0,0.01, 0.02, 0.025, 0.03, 0.04,
+                                       0.05, 0.06, 0.07,0.08, 0.09, 0.1, 0.25, 0.5, 0.75,0.9),
+                             C = c(0,0.01, 0.05, 0.1, 0.25, 0.5, 0.75,
+                                   1, 1.5, 2,5))
+svm_radial_grid <- train(Type ~., data = training, method = "svmRadial",
+                         trControl = svm_ctrl,
+                         preProcess = c("center", "scale"),
+                         tuneGrid = grid_radial,
+                         tuneLength = 10)
+svm_radial_grid
+plot(svm_radial_grid)
+
+#predictions using tune grid model
+test_pred_radial_grid <- predict(svm_radial_grid, newdata = testing)
+confusionMatrix(test_pred_radial_grid, testing$Type)
+
+
+#ROC curve
+library(pROC)
+svmrad_roc<- roc(as.character(testing$Type), as.numeric(test_pred_radial_grid))
+svmrad_auc <- auc(svmrad_roc)
+svmrad_auc
+```
+
+Discussion:
+- Radial classifier is not giving better results as compared to Linear classifier even after tuning it. This may be due to overfitting.
+- Radial clssifier is giving better results as compared to the linar classifier after tuning it. Thus, the data are best separated non-linearly. 
+
+## Logistic Regression 
+Given that we are developing a binary classifier, it is appropriate to utilize logistic regression. Logistic regression is considered the go-to method for binary classification. The estimates obtained from logistic regression characterize the relationship between the predictor and response variable on a log-odds scale. Because this isn't of much practical value, I will use the exponential function to calculate the odds ratios for each predictor.I will use the general linear model ('glm') method of the caret package with a binomial family. 
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+log_ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3, sampling = "up")
+set.seed(123)
+log_fit <- train(Type ~ .,  data=training, trControl = log_ctrl, method="glm",
+                 preProcess = c("center", "scale"),
+                 family="binomial",
+                 tuneLength = 10)
+
+exp(coef(log_fit$finalModel))
+
+#look at coefficients
+prob_log <- predict(log_fit, newdata = testing, type = "prob")
+pred_log <- predict(log_fit, newdata = testing)
+confusionMatrix(pred_log, testing$Type)
+
+#ROC curve
+library(pROC)
+log_roc<- roc(as.character(testing$Type), as.numeric(pred_log))
+log_auc <- auc(log_roc)
+log_auc
+```
+
+Similar or different than SVM? Why?
+- SVM and logistic regression have similar loss functions
+
+## Random Forest
+ I used grid search to determine the optimal paramaters. Based on extensive research and existing knowledge, I decided to use a range of mtry values (number of variables considered at each split). A common suggestion is to start with 5 values of mtry evenly spaced across a range from 2:p (total number predictors). Instead, I opted to combine this suggestion with that of the ISLR textbook, which recommends m = sqrt(p). Thus, I set mtry equal to a sequence of values, ranging from 2:sqrt(p) in order to determine the optimal mtry value. Secondly, I set the split rule as the Gini index, which is the default recommendation for classification and used the default min.node.size of 1. 
+  I used the train function from the caret package with the method set to "ranger". The ranger method was used given its increased computation speed in comparison to the "rf" method.
+  
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+library(caret)
+library(randomForest)
+library(mlbench)
+library(e1071)
+library(ranger)
+mtry <- seq(2, sqrt(ncol(training)), by = 2)
+tunegrid <- expand.grid(.mtry= mtry, .splitrule = "gini", .min.node.size = 1)
+rf_ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3, sampling = "up")
+
+set.seed(123)
+rf_mod <- train(Type ~., data = training, method = "ranger", 
+                metric = "Accuracy",
+                tuneGrid = tunegrid,
+                preProcess = c("center", "scale"),
+                trControl = rf_ctrl,
+                na.action = na.omit,
+                importance = "impurity",
+                tuneLength = 10)
+
+rf_pred <- predict(rf_mod, newdata = testing)
+confusionMatrix(rf_pred, testing$Type)
+```
+
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+#ROC curve
+library(pROC)
+rf_roc<- roc(as.character(testing$Type), as.numeric(rf_pred))
+rf_auc <- auc(rf_roc)
+rf_auc
+
+```
+
+## Calculating F1 score of best model
+```{r echo = TRUE, cache = TRUE}
+
+y <- testing$Type # factor of yes / no cases
+predictions <- rf_pred # factor of predictions
+
+precision <-  .8462 # same as PPV
+recall <- 1 # sensitivity
+
+F1 <- (2 * precision * recall) / (precision + recall)
+F1
+```
+
+```{r echo = TRUE, warning = FALSE, cache = TRUE}
+
+
+```
+
